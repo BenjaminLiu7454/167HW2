@@ -85,8 +85,12 @@ def hw2_2(args):
     mesh = hw2_scene.parse_triangle_mesh(args.mesh)
 
     def to_screen(p):
-        # HW2.2: implement this (basically the same as HW2.1)
-        return (0.0, 0.0)
+        x, y, z = p                   #PERSPECTIVE PROJECTION
+        xp = -(x/z)                            #project x & y given z 
+        yp = - (y/z)                           #from formula (x',y') = (-x/z , -y/z)
+        xs = args.width * (xp + args.s * a) /  (2 * args.s* a)
+        ys = args.height * (-yp + args.s) / (2 * args.s)
+        return spy.float2(xs,ys)
 
     # splat the triangles onto the screen
     screen_vertices = [to_screen(mesh.vertices[vid, :]) for vid in range(mesh.vertices.shape[0])]
@@ -104,13 +108,24 @@ def hw2_2(args):
         )
         for tri_id in range(mesh.faces.shape[0]):
             # HW2.2: implement this
-            # you need to retrieve/compute:
-            # sp0, sp1, sp2 from screen_vertices
-            # inv_depth0, inv_depth1, inv_depth2 from the Z coordinates
-            # (recall that camera-space depth is -z, which we assume is positive)
-            # aabb_min & aabb_max like in 2.1
-            # c0, c1, c2 from mesh.vertex_colors
-            # use mesh.faces[tri_id] to obtain the vertex indices
+
+            i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+            sp0 = screen_vertices[i0]           
+            sp1 = screen_vertices[i1]
+            sp2 = screen_vertices[i2]       
+            
+            inv_depth0 = -1.0/ mesh.vertices[i0, 2]                             # inv_depth0, inv_depth1, inv_depth2 from the Z coordinates
+            inv_depth1 = -1.0/ mesh.vertices[i1, 2]
+            inv_depth2 = -1.0/ mesh.vertices[i2, 2]                             
+            
+            c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+            c1 = mesh.vertex_colors[i1]
+            c2 = mesh.vertex_colors[i2]
+    
+            aabb_min = (max(0, math.floor(min(sp0.x, sp1.x, sp2.x))),           # aabb_min & aabb_max like in 2.1
+                max(0, math.floor(min(sp0.y, sp1.y, sp2.y))))
+            aabb_max = (min(args.width - 1, math.ceil(max(sp0.x, sp1.x, sp2.x))),
+                min(args.height - 1, math.ceil(max(sp0.y, sp1.y, sp2.y))))
 
             if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
                 continue

@@ -23,9 +23,6 @@ void compute_main(uint2 tid : SV_DispatchThreadID,
     }
 
     // TODO: HW 2.1
-
-    
-
     float2 p = float2(ipixel) + 0.5;
     float e01 = edge_value(sp0, sp1, p);
     float e12 = edge_value(sp1, sp2, p);

@@ -20,15 +20,22 @@ def hw2_1(args):
     def to_screen(p):
         # HW2.1: implement this
         # access "s" using args.s
-        return (0.0, 0.0)
+        x, y, z = p                   #PERSPECTIVE PROJECTION
+        xp = -(x/z)                            #project x & y given z 
+        yp = - (y/z)                           #from formula (x',y') = (-x/z , -y/z)
+        xs = img.width * (xp + args.s * a) /  (2 * args.s* a)
+        ys = img.height * (-yp + args.s) / (2 * args.s)
+        return spy.float2(xs,ys)
 
     sp0 = to_screen(args.p0)
     sp1 = to_screen(args.p1)
     sp2 = to_screen(args.p2)
 
     # HW2.1: implement this
-    aabb_min = (0, 0)
-    aabb_max = (10, 10)
+    aabb_min = (max(0, math.floor(min(sp0.x, sp1.x, sp2.x))),               #creates box that bounds triangle
+                max(0, math.floor(min(sp0.y, sp1.y, sp2.y))))               #and image dimensions 
+    aabb_max = (min(img.width  - 1, math.ceil(max(sp0.x, sp1.x, sp2.x))),
+                min(img.height - 1, math.ceil(max(sp0.y, sp1.y, sp2.y))))
 
     vars = {'sp0': sp0,
             'sp1': sp1,

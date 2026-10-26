@@ -181,11 +181,21 @@ def hw2_3(args):
 
     # HW 2.3: implement this
     # change np.zeros into the right matrices
-    projection = np.zeros((4, 4), dtype=np.float32)
-    camera_to_screen = np.zeros((4, 4), dtype=np.float32)
+    projection = np.array([
+                            [1, 0,  0, 0],
+                            [0, 1,  0, 0],
+                            [0, 0,  0, 1],
+                            [0, 0, -1, 0],
+                            ], dtype=np.float32)
+    camera_to_screen = np.array([
+                            [width/(2*camera.s*a),  0,                      0,  width/2],
+                            [0,                    -height/(2*camera.s),    0, height/2],
+                            [0,                     0,                      1,        0],
+                            [0,                     0,                      0,        1],
+                            ], dtype=np.float32)
     # use camera.cam_to_world
-    view_matrix = np.zeros((4, 4), dtype=np.float32)
-    world_to_screen = np.zeros((4, 4), dtype=np.float32)
+    view_matrix = np.linalg.inv(camera.cam_to_world)
+    world_to_screen = camera_to_screen @ projection @ view_matrix
     
     screen_vertices_list = []
     inv_depth_list = []
@@ -193,19 +203,15 @@ def hw2_3(args):
         # HW 2.3: implement this
         # change np.zeros into the right matrix
         # use mesh.model_matrix
-        MVP = np.zeros((4, 4), dtype=np.float32)
+        MVP = world_to_screen @ mesh.model_matrix           #combines object -> world -> view -> camera -> projection
         ones = np.ones((mesh.vertices.shape[0], 1), dtype=mesh.vertices.dtype)
-        vertices = np.concatenate(
-            [mesh.vertices, ones],
-            axis=1
-        )
-        # transform vertices using MVP & homogeneous coordinates division
-        # The resulting vertices should contain
-        # (screen_x, screen_y, inverse_depth).
-        # inverse_depth should be positive
-        # ---
-        # HW 2.3: your code here
-        # ---
+        vertices = np.concatenate([mesh.vertices, ones], axis=1)
+        vertices = vertices @ MVP.T                         # -> (x,y,1,-z) -> screen -> pixels
+        vertices = vertices / vertices[:, 3:4]              # transform vertices using MVP & homogeneous coordinates division
+                                                            # The resulting vertices should contain
+                                                            # (screen_x, screen_y, inverse_depth).
+                                                            # inverse_depth should be positive
+
         inv_depth_list.append(np.ascontiguousarray(vertices[:, 2]))
         screen_vertices_list.append(np.ascontiguousarray(vertices[:, :2]))
 
@@ -228,8 +234,24 @@ def hw2_3(args):
             screen_vertices = screen_vertices_list[mesh_id]
             inv_depth = inv_depth_list[mesh_id]
             for tri_id in range(mesh.faces.shape[0]):
-                # HW 2.3: implement this
-                # (basically the same as HW 2.2)
+                i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+                sp0 = screen_vertices[i0]           
+                sp1 = screen_vertices[i1]
+                sp2 = screen_vertices[i2]       
+                
+                inv_depth0 = inv_depth[i0]                         # inv_depth0, inv_depth1, inv_depth2 already computed
+                inv_depth1 = inv_depth[i1]
+                inv_depth2 = inv_depth[i2]
+                            
+                
+                c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+                c1 = mesh.vertex_colors[i1]
+                c2 = mesh.vertex_colors[i2]
+        
+                aabb_min = (max(0, math.floor(min(sp0[0], sp1[0], sp2[0]))),           # aabb_min & aabb_max like in 2.1
+                    max(0, math.floor(min(sp0[1], sp1[1], sp2[1]))))
+                aabb_max = (min(width - 1, math.ceil(max(sp0[0], sp1[0], sp2[0]))),
+                    min(height - 1, math.ceil(max(sp0[1], sp1[1], sp2[1]))))
 
                 if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
                     continue
@@ -271,10 +293,36 @@ def hw2_3(args):
         image.save_png(args.output, color_image.to_numpy())
 
 def interpolate_transformation(transform_keyframes, t):
-    # HW 2.4: implement this
-    # Find the two keyframes surrounding t and linearly
-    # interpolate the corresponding transformation parameters.
-    #
+    if t <= transform_keyframes[0]["time"]:             #from hw 1
+        return transform_keyframes[0]["transform"]      #clamp test to ensure t
+    if t >= transform_keyframes[-1]["time"]:            # is between the time of the first
+        return transform_keyframes[-1]["transform"]     # and last keyframe
+    
+    for kf in range(len(transform_keyframes) - 1):
+        k0 = transform_keyframes[kf]                    #k0 & k1 same as hw1
+        k1 = transform_keyframes[kf + 1]
+        t0, t1 = k0["time"], k1["time"]                 #keyframe time
+
+        if t0 <= t <= t1:                                  
+            w = (t - t0) / (t1 - t0)                    #the fraction of time i am from frame [kf] -> [kf+1]
+            frames = []                                 #stores parameters of the transformation for each time t,
+            for op0, op1 in zip(k0["transform"], k1["transform"]):      #iterates through each keyframe for transformation
+                name = next(iter(op0))                                  # the name of the transformation, iterating to see the transformation type                        
+
+                if name == "lookat":                                    #added lookat interpolation
+                    l0, l1 = op0["lookat"], op1["lookat"]
+                    frames.append({"lookat": {                      
+                        key: ((1 - w) * np.asarray(l0[key], dtype=np.float32)
+                              + w * np.asarray(l1[key], dtype=np.float32)).tolist()
+                        for key in ("position", "target", "up")
+                    }})
+                    continue
+
+                a = np.asarray(op0[name], dtype=np.float32)             #numpy array of the transformation parameters of k0 
+                b = np.asarray(op1[name], dtype=np.float32)             #same thing for k1
+                frames.append({name: ((1 - w) * a + w * b).tolist()})   #appends [transformation name]: inbetween frame 
+            return frames
+
     # Return a list of transformations in the same format
     # as the "transform" field in the scene JSON.
     interp_transforms = []
@@ -293,29 +341,47 @@ def hw2_4(args):
 
     a = width / height
 
-    # HW 2.4 TODO: implement this (basically the same as 2.3)
-    # change np.zeros into the right matrices
-    projection = np.zeros((4, 4), dtype=np.float32)
-    camera_to_screen = np.zeros((4, 4), dtype=np.float32)
-
+    projection = np.array([
+                            [1, 0,  0, 0],
+                            [0, 1,  0, 0],
+                            [0, 0,  0, 1],
+                            [0, 0, -1, 0],
+                            ], dtype=np.float32)
+    camera_to_screen = np.array([
+                            [width/(2*camera.s*a),  0,                      0,  width/2],
+                            [0,                    -height/(2*camera.s),    0, height/2],
+                            [0,                     0,                      1,        0],
+                            [0,                     0,                      0,        1],
+                            ], dtype=np.float32)
+    
     def render_frame(command_encoder, t):
         t = t % scene.duration
-        # HW 2.4 TODO: insert your code here and fill in world_to_screen
+        # HW 2.4: insert your code here and fill in world_to_screen
         # by using interpolate_transformation to compute the view matrix at time t
-        world_to_screen = np.zeros((4, 4), dtype=np.float32)
-        
+        if camera.transform_keyframes:
+            cam_to_world = hw2_scene.compose_transformations(interpolate_transformation(camera.transform_keyframes, t))
+        else:
+            cam_to_world = camera.cam_to_world
+
+        view_matrix = np.linalg.inv(cam_to_world)
+        world_to_screen = camera_to_screen @ projection @ view_matrix
         screen_vertices_list = []
         inv_depth_list = []
         for mesh in scene.meshes:
-            # HW 2.4 TODO: insert your code here and fill in the MVP matrix
+            # HW 2.4: insert your code here and fill in the MVP matrix
             # by using interpolate_transformation to compute the model matrix at time t
-            MVP = np.zeros((4, 4), dtype=np.float32)
+            if mesh.transform_keyframes:                                        # chekcs if there are keyframes
+                model_matrix = hw2_scene.compose_transformations(interpolate_transformation(
+                                                                mesh.transform_keyframes, t))
+            else:
+                model_matrix = mesh.model_matrix
+
+            MVP = world_to_screen @ model_matrix
             ones = np.ones((mesh.vertices.shape[0], 1), dtype=mesh.vertices.dtype)
-            vertices = np.concatenate(
-                [mesh.vertices, ones],
-                axis=1
-            )
-            # HW 2.4 TODO: insert your code here (basically the same as 2.3)
+            vertices = np.concatenate([mesh.vertices, ones], axis=1)
+            vertices = vertices @ MVP.T
+            vertices = vertices / vertices[:, 3:4]
+
             inv_depth_list.append(np.ascontiguousarray(vertices[:, 2]))
             screen_vertices_list.append(np.ascontiguousarray(vertices[:, :2]))
 
@@ -338,8 +404,24 @@ def hw2_4(args):
             screen_vertices = screen_vertices_list[mesh_id]
             inv_depth = inv_depth_list[mesh_id]
             for tri_id in range(mesh.faces.shape[0]):
-                # HW 2.4 TODO: implement this
-                # (basically the same as HW 2.2 & 2.3)
+                i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+                sp0 = screen_vertices[i0]           
+                sp1 = screen_vertices[i1]
+                sp2 = screen_vertices[i2]       
+                
+                inv_depth0 = inv_depth[i0]                         # inv_depth0, inv_depth1, inv_depth2 already computed
+                inv_depth1 = inv_depth[i1]
+                inv_depth2 = inv_depth[i2]
+                            
+                
+                c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+                c1 = mesh.vertex_colors[i1]
+                c2 = mesh.vertex_colors[i2]
+        
+                aabb_min = (max(0, math.floor(min(sp0[0], sp1[0], sp2[0]))),           # aabb_min & aabb_max like in 2.1
+                    max(0, math.floor(min(sp0[1], sp1[1], sp2[1]))))
+                aabb_max = (min(width - 1, math.ceil(max(sp0[0], sp1[0], sp2[0]))),
+                    min(height - 1, math.ceil(max(sp0[1], sp1[1], sp2[1]))))
 
                 if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
                     continue

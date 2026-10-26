@@ -188,8 +188,51 @@ def compose_transformations(transformations):
 
     for transform in transformations:
         pass
-        # HW 2.3 TODO: your code here
-
+        M = np.eye(4, dtype=np.float32)
+        if "scale" in transform:                        #scale transform
+            sx, sy, sz = transform["scale"]             #[sx    0   0   0]
+            M[0,0] = sx                                 #[0     sy  0   0]
+            M[1,1] = sy                                 #[0     0   sz  0]
+            M[2,2] = sz                                 #[0     0   0   1]
+        elif "translate" in transform:                  #translate transform
+            tx, ty, tz = transform["translate"]         #[1     0   0  tx]
+            M[0,1] = tx                                 #[0     1   0  ty]
+            M[1,3] = ty                                 #[0     0   1  tz]
+            M[2,3] = tz                                 #[0     0   0   1]
+        elif "rotate_x" in transform:
+            theta = np.radians(transform["rotate_x"][0])  #rotate x transform
+            M[1,1] = np.cos(theta)                      #[1     0   0   0]
+            M[1,2] = -np.sin(theta)                     #[0     cs -sn  0]
+            M[2,1] = np.sin(theta)                      #[0     sn  cs  0]
+            M[2,2] = np.cos(theta)                      #[0     0   0   1]
+        elif "rotate_y" in transform:
+            theta = np.radians(transform["rotate_y"][0])  #rotate y transform
+            M[0,0] = np.cos(theta)                      #[cs    0   sn  0]
+            M[0,2] = np.sin(theta)                      #[0     1   0   0]
+            M[2,0] = -np.sin(theta)                     #[-sn   0   cs  0]
+            M[2,2] = np.cos(theta)                      #[0     0   0   1]
+        elif "rotate_z" in transform:
+            theta = np.radians(transform["rotate_z"][0])  #rotate z transform
+            M[0,0] = np.cos(theta)                      #[cs   -sn  0   0]
+            M[0,1] = -np.sin(theta)                     #[sn    cs  0   0]
+            M[1,0] = np.sin(theta)                      #[0     0   1   0]
+            M[1,1] = np.cos(theta)                      #[0     0   0   1]
+        elif "lookat" in transform:                         #lookat transform
+            look = transform["lookat"]                      #use dtype=np.float32 to take cross products
+            pos = np.array(look["position"], dtype=np.float32)  #[rx   u'x -dx px]
+            tar = np.array(look["target"],   dtype=np.float32)  #[ry   u'y -dy py]
+            up  = np.array(look["up"],       dtype=np.float32)  #[rz   u'z -dz pz]  
+                                                                #[0     0   0   1]
+            d = tar - pos               #direction
+            d = d/ np.linalg.norm(d)    #normalize
+            r = np.cross(d,up)
+            r = r / np.linalg.norm(r)
+            u = np.cross(r,d)           #recompute up vector
+            M[:3,0] = r     #(rx,ry,rz)
+            M[:3,1] = u     #(u'x,u'y,u'z)
+            M[:3,2] = -d    #(-dx,-dy,-dz)
+            M[:3,3] = pos   #(px,py,pz)
+        F = M @ F   
     return F
 
 def parse_scene(filename : str) -> Scene:

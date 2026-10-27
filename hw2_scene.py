@@ -1,286 +1,1048 @@
-import json
-import numpy as np
+import slangpy as spy
+import device
+import buffer
+import window
 import math
+from . import hw2_scene
+import time
+import statistics
+import numpy as np
+import image
+from PIL import Image
 import os
-import trimesh
 
-class TriangleMesh:
-    """
-        A TriangleMesh contains the following:
-        vertices -> [N, 3] float numpy array
-        faces -> [M, 3] int numpy array
-        vertex_colors -> [N, 3] float numpy array
-        vertex_normals -> [N, 3] float numpy array
-        vertex_uvs -> [N, 2] float numpy array
-        model_matrix -> [4, 4] numpy array
-        material -> {'Kd': (float, float, float),
-                      'texture': string,
-                      'Ks': (float, float, float)
-                      'exponent': float}
-    """
-    def __init__(self,
-                 vertices,
-                 faces,
-                 vertex_colors,
-                 vertex_normals,
-                 vertex_uvs,
-                 model_matrix,
-                 transform_keyframes,
-                 material):
-        self.vertices = vertices
-        self.faces = faces
-        self.vertex_colors = vertex_colors
-        self.vertex_normals = vertex_normals
-        self.vertex_uvs = vertex_uvs
-        self.model_matrix = model_matrix
-        self.transform_keyframes = transform_keyframes
-        self.material = material
+def hw2_1(args):
+    slang_device = spy.create_device()
+    compute_shader = device.load_compute_shader(slang_device, 'hw2/hw2_1.slang')
+    img = buffer.create_texture_2d(slang_device, args.width, args.height)
 
-    def __repr__(self):
-        return (
-            f"TriangleMesh(\n"
-            f"  vertices={self.vertices},\n"
-            f"  faces={self.faces},\n"
-            f"  vertex_colors={self.vertex_colors},\n"
-            f"  vertex_normals={self.vertex_normals},\n"
-            f"  vertex_uvs={self.vertex_uvs},\n"
-            f"  model_matrix={self.model_matrix}\n"
-            f"  transform_keyframes={self.transform_keyframes}\n"
-            f"  material={self.material}\n"
-            f")"
+    a = img.width / img.height
+    def to_screen(p):
+        # HW2.1: implement this
+        # access "s" using args.s
+        x, y, z = p                   #PERSPECTIVE PROJECTION
+        xp = -(x/z)                            #project x & y given z 
+        yp = - (y/z)                           #from formula (x',y') = (-x/z , -y/z)
+        xs = img.width * (xp + args.s * a) /  (2 * args.s* a)
+        ys = img.height * (-yp + args.s) / (2 * args.s)
+        return spy.float2(xs,ys)
+
+    sp0 = to_screen(args.p0)
+    sp1 = to_screen(args.p1)
+    sp2 = to_screen(args.p2)
+
+    # HW2.1: implement this
+    aabb_min = (max(0, math.floor(min(sp0.x, sp1.x, sp2.x))),               #creates box that bounds triangle
+                max(0, math.floor(min(sp0.y, sp1.y, sp2.y))))               #and image dimensions 
+    aabb_max = (min(img.width  - 1, math.ceil(max(sp0.x, sp1.x, sp2.x))),
+                min(img.height - 1, math.ceil(max(sp0.y, sp1.y, sp2.y))))
+
+    vars = {'sp0': sp0,
+            'sp1': sp1,
+            'sp2': sp2,
+            'aabb_min': aabb_min,
+            'color': args.color}
+
+    def render(command_encoder, vars, img):
+        # Clear the image to background color
+        command_encoder.clear_texture_float(img, clear_value=spy.float4(0.5, 0.5, 0.5, 1.0))
+
+        if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
+            # the entire triangle is outside the screen
+            return
+
+        # Launch the kernel 
+        compute_shader.kernel.dispatch(
+            thread_count=[aabb_max[0] - aabb_min[0] + 1,
+                          aabb_max[1] - aabb_min[1] + 1,
+                          1],
+            command_encoder=command_encoder,
+            image=img,
+            **vars,
         )
 
-class Camera:
-    """
-        A Camera contains the following:
-        cam_to_world -> [4, 4] numpy array
-        transform_keyframes -> [Transform]
-        Transform ->  {'time': float,
-                       'transform': [{'scale'|'translate'|'rotate_x'|'rotate_y'|'rotate_z'|'lookat': transformation values}]}
-        resolution -> (int, int)
-        s -> float
-        z_near -> float
-    """
-    def __init__(self,
-                 cam_to_world,
-                 transform_keyframes,
-                 resolution,
-                 s,
-                 z_near):
-        self.cam_to_world = cam_to_world
-        self.transform_keyframes = transform_keyframes
-        self.resolution = resolution
-        self.s = s
-        self.z_near = z_near
-
-    def __repr__(self):
-        return (
-            f"Camera(\n"
-            f"  cam_to_world={self.cam_to_world},\n"
-            f"  transform_keyframes={self.transform_keyframes},\n"
-            f"  resolution={self.resolution},\n"
-            f"  s={self.s},\n"
-            f"  z_near={self.z_near}\n"
-            f")"
-        )
-
-class Scene:
-    """
-        A Scene contains the following:
-        camera -> Camera
-        background -> (float, float, float)
-        meshes -> [TriangleMesh]
-        duration -> float (for HW 2.4)
-        light_dir -> (float, float, float) (for HW2.7)
-        light_color -> (float, float, float) (for HW2.7)
-    """
-    def __init__(self,
-                 camera,
-                 background,
-                 meshes,
-                 duration,
-                 light_dir,
-                 light_color):
-        self.camera = camera
-        self.background = background
-        self.meshes = meshes
-        self.duration = duration
-        self.light_dir = light_dir
-        self.light_color = light_color
-
-    def __repr__(self):
-        return (
-            f"Scene(\n"
-            f"  camera={self.camera},\n"
-            f"  background={self.background},\n"
-            f"  meshes={self.meshes},\n"
-            f"  duration={self.duration}\n"
-            f"  light_dir={self.light_dir}\n"
-            f"  light_color={self.light_color}\n"
-            f")"
-        )
-
-def parse_triangle_mesh(filename: str) -> TriangleMesh:
-    if filename.lower().endswith('.ply'):
-        mesh = trimesh.load_mesh(filename, process=False)
-
-        vertices = np.asarray(mesh.vertices, dtype=np.float32)
-        faces = np.asarray(mesh.faces, dtype=np.int32)
-
-        # The "mesh.vertex_normals" call 
-        # computes normals if they aren't stored in the PLY
-        vertex_normals = np.asarray(
-            mesh.vertex_normals, dtype=np.float32)
-
-        uv = getattr(mesh.visual, 'uv', None)
-        if uv is not None:
-            vertex_uvs = np.asarray(uv, dtype=np.float32)
-        else:
-            # if there's no UVs we set everything to 00
-            vertex_uvs = np.zeros(
-                (len(vertices), 2), dtype=np.float32)
-
-        if mesh.visual.kind == 'vertex':
-            vertex_colors = np.asarray(
-                mesh.visual.vertex_colors[:, :3],
-                dtype=np.float32) / 255.0
-        else:
-            vertex_colors = np.ones_like(vertices)
-
+    if args.output == None:
+        app = window.App(slang_device, img)
+        app.run(vars, render)
     else:
-        with open(filename, 'r') as f:
-            mesh = json.load(f)
+        command_encoder = slang_device.create_command_encoder()
+        render(command_encoder, vars, img)
+        submit_id = slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        # explicit synchronization
+        slang_device.wait_for_submit(submit_id)
+        image.save_png(args.output, img.to_numpy())
 
-        vertices = np.array(mesh['vertices'], dtype=np.float32)
-        faces = np.array(mesh['faces'], dtype=np.int32)
-        vertex_colors = np.array(
-            mesh['vertex_colors'], dtype=np.float32)
+def hw2_2(args):
+    slang_device = spy.create_device()
+    compute_shader = device.load_compute_shader(slang_device, 'hw2/hw2_2.slang')
+    color_image = buffer.create_texture_2d(slang_device, args.width, args.height, num_channels=4)
+    depth_image = buffer.create_texture_2d(slang_device, args.width, args.height, num_channels=1)
 
-        if 'vertex_normals' in mesh:
-            vertex_normals = np.array(
-                mesh['vertex_normals'], dtype=np.float32)
+    a = args.width / args.height
+
+    mesh = hw2_scene.parse_triangle_mesh(args.mesh)
+
+    def to_screen(p):
+        x, y, z = p                   #PERSPECTIVE PROJECTION
+        xp = -(x/z)                            #project x & y given z 
+        yp = - (y/z)                           #from formula (x',y') = (-x/z , -y/z)
+        xs = args.width * (xp + args.s * a) /  (2 * args.s* a)
+        ys = args.height * (-yp + args.s) / (2 * args.s)
+        return spy.float2(xs,ys)
+
+    # splat the triangles onto the screen
+    screen_vertices = [to_screen(mesh.vertices[vid, :]) for vid in range(mesh.vertices.shape[0])]
+
+    def render(command_encoder, vars, img):
+        # Clear color buffer
+        command_encoder.clear_texture_float(
+            color_image,
+            clear_value=spy.float4(0.5, 0.5, 0.5, 1.0)
+        )
+        # Clear depth buffer
+        command_encoder.clear_texture_float(
+            depth_image,
+            clear_value=spy.float4(float("inf"), 0.0, 0.0, 0.0)
+        )
+        for tri_id in range(mesh.faces.shape[0]):
+            # HW2.2: implement this
+
+            i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+            sp0 = screen_vertices[i0]           
+            sp1 = screen_vertices[i1]
+            sp2 = screen_vertices[i2]       
+            
+            inv_depth0 = -1.0/ mesh.vertices[i0, 2]                             # inv_depth0, inv_depth1, inv_depth2 from the Z coordinates
+            inv_depth1 = -1.0/ mesh.vertices[i1, 2]
+            inv_depth2 = -1.0/ mesh.vertices[i2, 2]                             
+            
+            c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+            c1 = mesh.vertex_colors[i1]
+            c2 = mesh.vertex_colors[i2]
+    
+            aabb_min = (max(0, math.floor(min(sp0.x, sp1.x, sp2.x))),           # aabb_min & aabb_max like in 2.1
+                max(0, math.floor(min(sp0.y, sp1.y, sp2.y))))
+            aabb_max = (min(args.width - 1, math.ceil(max(sp0.x, sp1.x, sp2.x))),
+                min(args.height - 1, math.ceil(max(sp0.y, sp1.y, sp2.y))))
+
+            if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
+                continue
+
+            shade_vars = {'sp0': sp0,
+                          'sp1': sp1,
+                          'sp2': sp2,
+                          'inv_depth0': inv_depth0,
+                          'inv_depth1': inv_depth1,
+                          'inv_depth2': inv_depth2,
+                          'aabb_min': aabb_min,
+                          'c0': c0,
+                          'c1': c1,
+                          'c2': c2,
+                          's': args.s,
+                          'a': a}
+            compute_shader.kernel.dispatch(
+                thread_count=[aabb_max[0] - aabb_min[0] + 1,
+                              aabb_max[1] - aabb_min[1] + 1,
+                              1],
+                command_encoder=command_encoder,
+                color_image=color_image,
+                depth_image=depth_image,
+                **shade_vars
+            )
+            # Synchronize to avoid race conditions on the depth buffer
+            command_encoder.global_barrier()
+
+    if args.output == None:
+        app = window.App(slang_device, color_image)
+        app.run({}, render)
+    else:
+        command_encoder = slang_device.create_command_encoder()
+        render(command_encoder, {}, color_image)
+        submit_id = slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        # explicit synchronization
+        slang_device.wait_for_submit(submit_id)
+        image.save_png(args.output, color_image.to_numpy())
+
+def hw2_3(args):
+    slang_device = spy.create_device()
+    compute_shader = device.load_compute_shader(slang_device, 'hw2/hw2_2.slang')
+    scene = hw2_scene.parse_scene(args.scene)
+    camera = scene.camera
+    width = camera.resolution[0]
+    height = camera.resolution[1]
+    color_image = buffer.create_texture_2d(slang_device, width, height, num_channels=4)
+    depth_image = buffer.create_texture_2d(slang_device, width, height, num_channels=1)
+
+    a = width / height
+
+    # HW 2.3: implement this
+    # change np.zeros into the right matrices
+    projection = np.array([
+                            [1, 0,  0, 0],
+                            [0, 1,  0, 0],
+                            [0, 0,  0, 1],
+                            [0, 0, -1, 0],
+                            ], dtype=np.float32)
+    camera_to_screen = np.array([
+                            [width/(2*camera.s*a),  0,                      0,  width/2],
+                            [0,                    -height/(2*camera.s),    0, height/2],
+                            [0,                     0,                      1,        0],
+                            [0,                     0,                      0,        1],
+                            ], dtype=np.float32)
+    # use camera.cam_to_world
+    view_matrix = np.linalg.inv(camera.cam_to_world)
+    world_to_screen = camera_to_screen @ projection @ view_matrix
+    
+    screen_vertices_list = []
+    inv_depth_list = []
+    for mesh in scene.meshes:
+        # HW 2.3: implement this
+        # change np.zeros into the right matrix
+        # use mesh.model_matrix
+        MVP = world_to_screen @ mesh.model_matrix           #combines object -> world -> view -> camera -> projection
+        ones = np.ones((mesh.vertices.shape[0], 1), dtype=mesh.vertices.dtype)
+        vertices = np.concatenate([mesh.vertices, ones], axis=1)
+        vertices = vertices @ MVP.T                         # -> (x,y,1,-z) -> screen -> pixels
+        vertices = vertices / vertices[:, 3:4]              # transform vertices using MVP & homogeneous coordinates division
+                                                            # The resulting vertices should contain
+                                                            # (screen_x, screen_y, inverse_depth).
+                                                            # inverse_depth should be positive
+
+        inv_depth_list.append(np.ascontiguousarray(vertices[:, 2]))
+        screen_vertices_list.append(np.ascontiguousarray(vertices[:, :2]))
+
+    def render(command_encoder, vars, img):
+        # Clear color buffer
+        command_encoder.clear_texture_float(
+            color_image,
+            clear_value=spy.float4(scene.background[0],
+                                   scene.background[1], 
+                                   scene.background[2],
+                                   1.0)
+        )
+        # Clear depth buffer
+        command_encoder.clear_texture_float(
+            depth_image,
+            clear_value=spy.float4(float("inf"), 0.0, 0.0, 0.0)
+        )
+        for mesh_id in range(len(scene.meshes)):
+            mesh = scene.meshes[mesh_id]
+            screen_vertices = screen_vertices_list[mesh_id]
+            inv_depth = inv_depth_list[mesh_id]
+            for tri_id in range(mesh.faces.shape[0]):
+                i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+                sp0 = screen_vertices[i0]           
+                sp1 = screen_vertices[i1]
+                sp2 = screen_vertices[i2]       
+                
+                inv_depth0 = inv_depth[i0]                         # inv_depth0, inv_depth1, inv_depth2 already computed
+                inv_depth1 = inv_depth[i1]
+                inv_depth2 = inv_depth[i2]
+                            
+                
+                c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+                c1 = mesh.vertex_colors[i1]
+                c2 = mesh.vertex_colors[i2]
+        
+                aabb_min = (max(0, math.floor(min(sp0[0], sp1[0], sp2[0]))),           # aabb_min & aabb_max like in 2.1
+                    max(0, math.floor(min(sp0[1], sp1[1], sp2[1]))))
+                aabb_max = (min(width - 1, math.ceil(max(sp0[0], sp1[0], sp2[0]))),
+                    min(height - 1, math.ceil(max(sp0[1], sp1[1], sp2[1]))))
+
+                if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
+                    continue
+
+                shade_vars = {'sp0': sp0,
+                              'sp1': sp1,
+                              'sp2': sp2,
+                              'inv_depth0': inv_depth0,
+                              'inv_depth1': inv_depth1,
+                              'inv_depth2': inv_depth2,
+                              'aabb_min': aabb_min,
+                              'c0': c0,
+                              'c1': c1,
+                              'c2': c2,
+                              's': camera.s,
+                              'a': a}
+                compute_shader.kernel.dispatch(
+                    thread_count=[aabb_max[0] - aabb_min[0] + 1,
+                                  aabb_max[1] - aabb_min[1] + 1,
+                                  1],
+                    command_encoder=command_encoder,
+                    color_image=color_image,
+                    depth_image=depth_image,
+                    **shade_vars
+                )
+                # Synchronize to avoid race conditions on the depth buffer
+                command_encoder.global_barrier()
+
+    if args.output == None:
+        app = window.App(slang_device, color_image)
+        app.run({}, render)
+    else:
+        command_encoder = slang_device.create_command_encoder()
+        render(command_encoder, {}, color_image)
+        submit_id = slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        slang_device.wait_for_submit(submit_id)
+        image.save_png(args.output, color_image.to_numpy())
+
+def interpolate_transformation(transform_keyframes, t):
+    if t <= transform_keyframes[0]["time"]:             #from hw 1
+        return transform_keyframes[0]["transform"]      #clamp test to ensure t
+    if t >= transform_keyframes[-1]["time"]:            # is between the time of the first
+        return transform_keyframes[-1]["transform"]     # and last keyframe
+    
+    for kf in range(len(transform_keyframes) - 1):
+        k0 = transform_keyframes[kf]                    #k0 & k1 same as hw1
+        k1 = transform_keyframes[kf + 1]
+        t0, t1 = k0["time"], k1["time"]                 #keyframe time
+
+        if t0 <= t <= t1:                                  
+            w = (t - t0) / (t1 - t0)                    #the fraction of time i am from frame [kf] -> [kf+1]
+            frames = []                                 #stores parameters of the transformation for each time t,
+            for op0, op1 in zip(k0["transform"], k1["transform"]):      #iterates through each keyframe for transformation
+                name = next(iter(op0))                                  # the name of the transformation, iterating to see the transformation type                        
+
+                if name == "lookat":                                    #added lookat interpolation
+                    l0, l1 = op0["lookat"], op1["lookat"]
+                    frames.append({"lookat": {                      
+                        key: ((1 - w) * np.asarray(l0[key], dtype=np.float32)
+                              + w * np.asarray(l1[key], dtype=np.float32)).tolist()
+                        for key in ("position", "target", "up")
+                    }})
+                    continue
+
+                a = np.asarray(op0[name], dtype=np.float32)             #numpy array of the transformation parameters of k0 
+                b = np.asarray(op1[name], dtype=np.float32)             #same thing for k1
+                frames.append({name: ((1 - w) * a + w * b).tolist()})   #appends [transformation name]: inbetween frame 
+            return frames
+
+    # Return a list of transformations in the same format
+    # as the "transform" field in the scene JSON.
+    interp_transforms = []
+
+    return interp_transforms
+    
+def hw2_4(args):
+    slang_device = spy.create_device()
+    compute_shader = device.load_compute_shader(slang_device, 'hw2/hw2_2.slang')
+    scene = hw2_scene.parse_scene(args.scene)
+    camera = scene.camera
+    width = camera.resolution[0]
+    height = camera.resolution[1]
+    color_image = buffer.create_texture_2d(slang_device, width, height, num_channels=4)
+    depth_image = buffer.create_texture_2d(slang_device, width, height, num_channels=1)
+
+    a = width / height
+
+    projection = np.array([
+                            [1, 0,  0, 0],
+                            [0, 1,  0, 0],
+                            [0, 0,  0, 1],
+                            [0, 0, -1, 0],
+                            ], dtype=np.float32)
+    camera_to_screen = np.array([
+                            [width/(2*camera.s*a),  0,                      0,  width/2],
+                            [0,                    -height/(2*camera.s),    0, height/2],
+                            [0,                     0,                      1,        0],
+                            [0,                     0,                      0,        1],
+                            ], dtype=np.float32)
+    
+    def render_frame(command_encoder, t):
+        t = t % scene.duration
+        # HW 2.4: insert your code here and fill in world_to_screen
+        # by using interpolate_transformation to compute the view matrix at time t
+        if camera.transform_keyframes:
+            cam_to_world = hw2_scene.compose_transformations(interpolate_transformation(camera.transform_keyframes, t))
         else:
-            # Generate smooth vertex normals.
-            tri_mesh = trimesh.Trimesh(
+            cam_to_world = camera.cam_to_world
+
+        view_matrix = np.linalg.inv(cam_to_world)
+        world_to_screen = camera_to_screen @ projection @ view_matrix
+        screen_vertices_list = []
+        inv_depth_list = []
+        for mesh in scene.meshes:
+            # HW 2.4: insert your code here and fill in the MVP matrix
+            # by using interpolate_transformation to compute the model matrix at time t
+            if mesh.transform_keyframes:                                        # chekcs if there are keyframes
+                model_matrix = hw2_scene.compose_transformations(interpolate_transformation(
+                                                                mesh.transform_keyframes, t))
+            else:
+                model_matrix = mesh.model_matrix
+
+            MVP = world_to_screen @ model_matrix
+            ones = np.ones((mesh.vertices.shape[0], 1), dtype=mesh.vertices.dtype)
+            vertices = np.concatenate([mesh.vertices, ones], axis=1)
+            vertices = vertices @ MVP.T
+            vertices = vertices / vertices[:, 3:4]
+
+            inv_depth_list.append(np.ascontiguousarray(vertices[:, 2]))
+            screen_vertices_list.append(np.ascontiguousarray(vertices[:, :2]))
+
+        
+        # Clear color buffer
+        command_encoder.clear_texture_float(
+            color_image,
+            clear_value=spy.float4(scene.background[0],
+                                   scene.background[1], 
+                                   scene.background[2],
+                                   1.0)
+        )
+        # Clear depth buffer
+        command_encoder.clear_texture_float(
+            depth_image,
+            clear_value=spy.float4(float("inf"), 0.0, 0.0, 0.0)
+        )
+        for mesh_id in range(len(scene.meshes)):
+            mesh = scene.meshes[mesh_id]
+            screen_vertices = screen_vertices_list[mesh_id]
+            inv_depth = inv_depth_list[mesh_id]
+            for tri_id in range(mesh.faces.shape[0]):
+                i0, i1, i2 = mesh.faces[tri_id]                                     # sp0, sp1, sp2 from screen_vertices
+                sp0 = screen_vertices[i0]           
+                sp1 = screen_vertices[i1]
+                sp2 = screen_vertices[i2]       
+                
+                inv_depth0 = inv_depth[i0]                         # inv_depth0, inv_depth1, inv_depth2 already computed
+                inv_depth1 = inv_depth[i1]
+                inv_depth2 = inv_depth[i2]
+                            
+                
+                c0 = mesh.vertex_colors[i0]                                         # c0, c1, c2 from mesh.vertex_colors
+                c1 = mesh.vertex_colors[i1]
+                c2 = mesh.vertex_colors[i2]
+        
+                aabb_min = (max(0, math.floor(min(sp0[0], sp1[0], sp2[0]))),           # aabb_min & aabb_max like in 2.1
+                    max(0, math.floor(min(sp0[1], sp1[1], sp2[1]))))
+                aabb_max = (min(width - 1, math.ceil(max(sp0[0], sp1[0], sp2[0]))),
+                    min(height - 1, math.ceil(max(sp0[1], sp1[1], sp2[1]))))
+
+                if aabb_min[0] > aabb_max[0] or aabb_min[1] > aabb_max[1]:
+                    continue
+
+                shade_vars = {'sp0': sp0,
+                        'sp1': sp1,
+                        'sp2': sp2,
+                        'inv_depth0': inv_depth0,
+                        'inv_depth1': inv_depth1,
+                        'inv_depth2': inv_depth2,
+                        'aabb_min': aabb_min,
+                        'c0': c0,
+                        'c1': c1,
+                        'c2': c2,
+                        's': camera.s,
+                        'a': a}
+                compute_shader.kernel.dispatch(
+                    thread_count=[aabb_max[0] - aabb_min[0] + 1,
+                                  aabb_max[1] - aabb_min[1] + 1,
+                                  1],
+                    command_encoder=command_encoder,
+                    color_image=color_image,
+                    depth_image=depth_image,
+                    **shade_vars
+                )
+                # Synchronize to avoid race conditions on the depth buffer
+                command_encoder.global_barrier()
+
+    if args.output == None:
+        app = window.App(slang_device, color_image)
+        vars = {'time': 0.0}
+        def update(t, vars):
+            vars['time'] = t
+            return vars
+
+        def render(command_encoder, vars, img):
+            render_frame(command_encoder, vars['time'])
+
+        app.run(vars, render, update)
+    else:
+        t = args.time % scene.duration if hasattr(args, 'time') else 0.0
+        command_encoder = slang_device.create_command_encoder()
+        render_frame(command_encoder, t)
+        submit_id = slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        slang_device.wait_for_submit(submit_id)
+        image.save_png(args.output, color_image.to_numpy())
+
+def hw2_5(args):
+    slang_device = spy.create_device()
+    transform_vertices_shader = \
+        device.load_compute_shader(slang_device,
+            'hw2/hw2_5.slang', 'transform_vertices')
+    clear_buffers_shader = \
+        device.load_compute_shader(slang_device,
+            'hw2/hw2_5.slang', 'clear_buffers')
+    rasterize_depth_shader = \
+        device.load_compute_shader(slang_device,
+            'hw2/hw2_5.slang', 'rasterize_depth')
+    rasterize_id_shader = \
+        device.load_compute_shader(slang_device,
+            'hw2/hw2_5.slang', 'rasterize_id')
+    shade_shader = \
+        device.load_compute_shader(slang_device,
+            'hw2/hw2_5.slang', 'shade')
+
+    scene = hw2_scene.parse_scene(args.scene)
+    camera = scene.camera
+    width = camera.resolution[0]
+    height = camera.resolution[1]
+    a = width / height
+
+    # Preprocessing: merge all meshes into one list
+    # so that we can launch them on GPU
+    vertices_list = []
+    faces_list = []
+    colors_list = []
+    # need to retain the offset list for animation
+    vertex_offsets = []
+    vertex_offset = 0
+    for mesh in scene.meshes:
+        vertices_list.append(mesh.vertices)
+        # the indexing needs to be updated to the new array
+        faces_list.append(mesh.faces + vertex_offset)
+        colors_list.append(mesh.vertex_colors)
+        vertex_offsets.append(vertex_offset)
+        vertex_offset += len(mesh.vertices)
+    vertices_host = np.concatenate(vertices_list)
+    faces_host = np.concatenate(faces_list).astype(np.uint32)
+    vertex_colors_host = np.concatenate(colors_list)
+    num_vertices = vertices_host.shape[0]
+    num_faces = faces_host.shape[0]
+
+    # Allocate/upload buffer
+    vertices = buffer.structured_typed_buffer_from_numpy(\
+        slang_device, vertices_host, 'float3')
+    projected_vertices = spy.Tensor.empty(
+        slang_device, shape=(num_vertices,), dtype='float3')
+    faces = buffer.structured_typed_buffer_from_numpy(\
+        slang_device, faces_host, 'uint3')
+    vertex_colors = buffer.structured_typed_buffer_from_numpy(\
+        slang_device, vertex_colors_host, 'float3')
+    depth_buffer = spy.Tensor.empty(
+        slang_device, shape=(width * height,), dtype='uint')
+    triangle_id_buffer = spy.Tensor.empty(
+        slang_device, shape=(width * height,), dtype='uint')
+    color_image = buffer.create_texture_2d(\
+        slang_device, width, height, num_channels=4)
+
+    # HW 2.5 TODO: implement this (basically the same as 2.3 and 2.4)
+    # change np.zeros into the right matrices
+    projection = np.array([
+    [1, 0,  0, 0],
+    [0, 1,  0, 0],
+    [0, 0,  0, 1],
+    [0, 0, -1, 0],
+    ], dtype=np.float32)
+    camera_to_screen = np.array([
+    [width / (2 * camera.s * a), 0, 0, width / 2],
+    [0, -height / (2 * camera.s), 0, height / 2],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1],
+    ], dtype=np.float32)
+
+    def render_frame(command_encoder, t):
+        t = t % scene.duration
+        # HW 2.5 TODO: implement this (basically the same as 2.4)
+        if camera.transform_keyframes:
+            cam_to_world = hw2_scene.compose_transformations(interpolate_transformation(camera.transform_keyframes, t))
+        else:
+            cam_to_world = camera.cam_to_world
+
+        view_matrix = np.linalg.inv(cam_to_world)
+        world_to_screen = camera_to_screen @ projection @ view_matrix
+
+        command_encoder.clear_texture_float(
+            color_image,
+            clear_value=spy.float4(scene.background[0],
+                                   scene.background[1], 
+                                   scene.background[2],
+                                   1.0)
+        )
+
+        # Transform the vertices per mesh because each mesh
+        # has a different model matrix
+        for mesh, offset in zip(scene.meshes, vertex_offsets):
+            # HW 2.5 TODO: implement this (basically the same as 2.4)
+            if mesh.transform_keyframes:
+                model_matrix = hw2_scene.compose_transformations(
+                    interpolate_transformation(mesh.transform_keyframes, t)
+                )
+            else:
+                model_matrix = mesh.model_matrix
+
+            MVP = world_to_screen @ model_matrix
+            transform_vertices_shader.kernel.dispatch(\
+                thread_count=[mesh.vertices.shape[0], 1, 1],
+                command_encoder=command_encoder,
+                num_vertices=mesh.vertices.shape[0],
+                vertex_offset=offset,
+                MVP=spy.float4x4(MVP),
                 vertices=vertices,
-                faces=faces,
-                process=False)
-            vertex_normals = np.asarray(
-                tri_mesh.vertex_normals, dtype=np.float32)
+                projected_vertices=projected_vertices.storage
+            )
 
-        vertex_uvs = np.array(
-            mesh.get('vertex_uvs',
-                     np.zeros((len(vertices), 2))),
-            dtype=np.float32)
+        clear_buffers_shader.kernel.dispatch(
+            thread_count=[width * height, 1, 1],
+            command_encoder=command_encoder,
+            num_pixels=width * height,
+            depth_buffer=depth_buffer.storage,
+            triangle_id_buffer=triangle_id_buffer.storage)
 
-    return TriangleMesh(
-        vertices, faces, vertex_colors,
-        vertex_normals, vertex_uvs,
-        model_matrix=np.eye(4, dtype=np.float32),
-        transform_keyframes=[],
-        material={})
+        command_encoder.global_barrier()
 
-def compose_transformations(transformations):
-    """
-        Given a list of transformations, compose them into a matrix.
-    """
-    F = np.eye(4, dtype=np.float32)
+        rasterize_depth_shader.kernel.dispatch(\
+            thread_count=[num_faces, 1, 1],
+            command_encoder=command_encoder,
+            num_triangles=num_faces,
+            width=width,
+            height=height,
+            s=camera.s,
+            a=a,
+            faces=faces,
+            projected_vertices=projected_vertices.storage,
+            depth_buffer=depth_buffer.storage
+        )
 
-    for transform in transformations:
-        pass
-        M = np.eye(4, dtype=np.float32)
-        if "scale" in transform:                        #scale transform
-            sx, sy, sz = transform["scale"]             #[sx    0   0   0]
-            M[0,0] = sx                                 #[0     sy  0   0]
-            M[1,1] = sy                                 #[0     0   sz  0]
-            M[2,2] = sz                                 #[0     0   0   1]
-        elif "translate" in transform:                  #translate transform
-            tx, ty, tz = transform["translate"]         #[1     0   0  tx]
-            M[0,1] = tx                                 #[0     1   0  ty]
-            M[1,3] = ty                                 #[0     0   1  tz]
-            M[2,3] = tz                                 #[0     0   0   1]
-        elif "rotate_x" in transform:
-            theta = np.radians(transform["rotate_x"][0])  #rotate x transform
-            M[1,1] = np.cos(theta)                      #[1     0   0   0]
-            M[1,2] = -np.sin(theta)                     #[0     cs -sn  0]
-            M[2,1] = np.sin(theta)                      #[0     sn  cs  0]
-            M[2,2] = np.cos(theta)                      #[0     0   0   1]
-        elif "rotate_y" in transform:
-            theta = np.radians(transform["rotate_y"][0])  #rotate y transform
-            M[0,0] = np.cos(theta)                      #[cs    0   sn  0]
-            M[0,2] = np.sin(theta)                      #[0     1   0   0]
-            M[2,0] = -np.sin(theta)                     #[-sn   0   cs  0]
-            M[2,2] = np.cos(theta)                      #[0     0   0   1]
-        elif "rotate_z" in transform:
-            theta = np.radians(transform["rotate_z"][0])  #rotate z transform
-            M[0,0] = np.cos(theta)                      #[cs   -sn  0   0]
-            M[0,1] = -np.sin(theta)                     #[sn    cs  0   0]
-            M[1,0] = np.sin(theta)                      #[0     0   1   0]
-            M[1,1] = np.cos(theta)                      #[0     0   0   1]
-        elif "lookat" in transform:                         #lookat transform
-            look = transform["lookat"]                      #use dtype=np.float32 to take cross products
-            pos = np.array(look["position"], dtype=np.float32)  #[rx   u'x -dx px]
-            tar = np.array(look["target"],   dtype=np.float32)  #[ry   u'y -dy py]
-            up  = np.array(look["up"],       dtype=np.float32)  #[rz   u'z -dz pz]  
-                                                                #[0     0   0   1]
-            d = tar - pos               #direction
-            d = d/ np.linalg.norm(d)    #normalize
-            r = np.cross(d,up)
-            r = r / np.linalg.norm(r)
-            u = np.cross(r,d)           #recompute up vector
-            M[:3,0] = r     #(rx,ry,rz)
-            M[:3,1] = u     #(u'x,u'y,u'z)
-            M[:3,2] = -d    #(-dx,-dy,-dz)
-            M[:3,3] = pos   #(px,py,pz)
-        F = M @ F   
-    return F
+        command_encoder.global_barrier()
 
-def parse_scene(filename : str) -> Scene:
-    scene_dir = os.path.dirname(filename)
-    with open(filename, 'r') as f:
-        scene = json.load(f)
-        duration = 1.0
-        if 'duration' in scene:
-            duration = scene['duration']
-        camera = scene['camera']
-        cam_to_world = np.eye(4, dtype=np.float32)
-        if 'transform' in camera:
-            cam_to_world = compose_transformations(camera['transform'])
-        transform_keyframes = []
-        if 'transform_keyframes' in camera:
-            transform_keyframes = camera['transform_keyframes']
-        camera = Camera(cam_to_world,
-                        transform_keyframes,
-                        camera.get('resolution', (640, 480)),
-                        camera.get('s', 1.0),
-                        camera.get('z_near', 1e-3))
-        background = scene['background']
-        meshes = []
-        for obj in scene['objects']:
-            mesh_filename = os.path.join(scene_dir, obj['filename'])
-            mesh = parse_triangle_mesh(mesh_filename)
-            if 'transform' in obj:
-                mesh.model_matrix = compose_transformations(obj['transform'])
-            if 'transform_keyframes' in obj:
-                mesh.transform_keyframes = obj['transform_keyframes']
-            # Use dictionary merging to set default material parameters
-            mesh.material = {
-                'Kd': [0.5, 0.5, 0.5],
-                'Ks': [0.5, 0.5, 0.5],
-                'exponent': 32.0,
-                **obj.get('material', {})
-            }
-            meshes.append(mesh)
+        rasterize_id_shader.kernel.dispatch(\
+            thread_count=[num_faces, 1, 1],
+            command_encoder=command_encoder,
+            num_triangles=num_faces,
+            width=width,
+            height=height,
+            s=camera.s,
+            a=a,
+            faces=faces,
+            projected_vertices=projected_vertices.storage,
+            depth_buffer=depth_buffer.storage,
+            triangle_id_buffer=triangle_id_buffer.storage
+        )
 
-        light_dir = (1.0 / math.sqrt(3.0), 1.0 / math.sqrt(3.0), 1.0 / math.sqrt(3.0))
-        light_color = (1.0, 1.0, 1.0)
-        if 'light' in scene:
-            light = scene['light']
-            if 'light_dir' in light:
-                light_dir = light['light_dir']
-                # normalize to unit direction
-                light_dir = tuple((np.asarray(light_dir) / np.linalg.norm(light_dir)).tolist())
-            if 'light_color' in light:
-                light_color = light['light_color']
+        command_encoder.global_barrier()
 
-    return Scene(camera, background, meshes, duration, light_dir, light_color)
+        shade_shader.kernel.dispatch(\
+            thread_count=[width, height, 1],
+            command_encoder=command_encoder,
+            width=width,
+            height=height,
+            s=camera.s,
+            a=a,
+            faces=faces,
+            vertex_colors=vertex_colors,
+            projected_vertices=projected_vertices.storage,
+            triangle_id_buffer=triangle_id_buffer.storage,
+            image=color_image)
+
+        command_encoder.global_barrier()
+
+    if args.output is None:
+        app = window.App(slang_device, color_image)
+        vars = {'time': 0.0}
+        def update(t, vars):
+            vars['time'] = t
+            return vars
+
+        def render(command_encoder, vars, img):
+            render_frame(command_encoder, vars['time'])
+
+        app.run(vars, render, update)
+    else:
+        t = args.time % scene.duration if hasattr(args, 'time') else 0.0
+        command_encoder = slang_device.create_command_encoder()
+        render_frame(command_encoder, t)
+        slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        image.save_png(args.output, color_image.to_numpy())
+
+def hw2_6(args):
+    slang_device = spy.create_device()
+    program = slang_device.load_program(
+        "hw2/hw2_6.slang",
+        ["vertex_main", "fragment_main"]
+    )
+
+    scene = hw2_scene.parse_scene(args.scene)
+    camera = scene.camera
+    width = camera.resolution[0]
+    height = camera.resolution[1]
+    a = width / height
+
+    # Upload meshes to GPU
+    gpu_meshes = []
+    for mesh in scene.meshes:
+        vertices = buffer.structured_typed_buffer_from_numpy(
+            slang_device, mesh.vertices, 'float3')
+        vertex_colors = buffer.structured_typed_buffer_from_numpy(
+            slang_device, mesh.vertex_colors, 'float3')
+        indices_host = np.ascontiguousarray(
+            mesh.faces.reshape(-1), dtype=np.uint32)
+        indices = slang_device.create_buffer(
+            size=indices_host.nbytes,
+            usage=spy.BufferUsage.index_buffer,
+            data=indices_host
+        )
+        render_state = spy.RenderState({
+            'viewports': [spy.Viewport.from_size(width, height)],
+            'scissor_rects': [spy.ScissorRect.from_size(width, height)],
+            'index_buffer': spy.BufferOffsetPair(indices),
+            'index_format': spy.IndexFormat.uint32,
+        })
+        gpu_meshes.append({
+            'vertices': vertices,
+            'indices': indices,
+            'vertex_colors': vertex_colors,
+            'render_state': render_state
+        })
+
+    color_image = slang_device.create_texture(
+        width=width,
+        height=height,
+        format=spy.Format.rgba32_float,
+        usage=(spy.TextureUsage.render_target |
+               spy.TextureUsage.shader_resource |
+               spy.TextureUsage.copy_source)
+    )
+    depth_image = slang_device.create_texture(
+        width=width,
+        height=height,
+        format=spy.Format.d32_float,
+        usage=spy.TextureUsage.depth_stencil
+    )
+    color_view = color_image.create_view()
+    depth_view = depth_image.create_view()
+
+    pipeline = slang_device.create_render_pipeline(
+        program=program,
+        input_layout=None,
+        primitive_topology=spy.PrimitiveTopology.triangle_list,
+        targets=[
+            spy.ColorTargetDesc({"format": color_image.format})
+        ],
+        depth_stencil=spy.DepthStencilDesc({
+            "format": spy.Format.d32_float,
+            "depth_test_enable": True,
+            "depth_write_enable": True,
+            "depth_func": spy.ComparisonFunc.less,
+        }),
+        rasterizer=spy.RasterizerDesc({
+            "cull_mode": spy.CullMode.none
+        }),
+    )
+
+    render_pass_desc = spy.RenderPassDesc({
+        'color_attachments': [
+            spy.RenderPassColorAttachment({
+                'view': color_view,
+                'load_op': spy.LoadOp.clear,
+                'store_op': spy.StoreOp.store,
+                'clear_value': spy.float4(\
+                    scene.background[0],
+                    scene.background[1], 
+                    scene.background[2], 1.0),
+            })
+        ],
+        'depth_stencil_attachment': spy.RenderPassDepthStencilAttachment({
+            'view': depth_view,
+            'depth_load_op': spy.LoadOp.clear,
+            'depth_store_op': spy.StoreOp.dont_care,
+            'depth_clear_value': 1.0,
+        }),
+    })
+
+    clip_projection = np.array([
+        [1 / (camera.s * a), 0, 0, 0],
+        [0, 1 / camera.s, 0, 0],
+        [0, 0, -1, -camera.z_near],
+        [0, 0, -1, 0],
+    ], dtype=np.float32)
+
+    def render_frame(command_encoder, t):
+        t = t % scene.duration
+        # HW 2.6 TODO: compute the view matrix
+        # remember to handle animation if keyframes exist
+        # Compute the camera-to-world matrix, accounting for animation.
+        if camera.transform_keyframes:
+            cam_to_world = hw2_scene.compose_transformations(
+                interpolate_transformation(camera.transform_keyframes, t)
+            )
+        else:
+            cam_to_world = camera.cam_to_world
+
+        view_matrix = np.linalg.inv(cam_to_world)
+
+        render_pass = command_encoder.begin_render_pass(render_pass_desc)
+
+        for mesh, gpu_mesh in zip(scene.meshes, gpu_meshes):
+            # HW 2.6 TODO: compute the model matrix
+            # remember to handle animation if keyframes exist
+            if mesh.transform_keyframes:
+                model_matrix = hw2_scene.compose_transformations(
+                    interpolate_transformation(mesh.transform_keyframes, t)
+                )
+            else:
+                model_matrix = mesh.model_matrix
+
+            MVP = clip_projection @ view_matrix @ model_matrix
+
+            root = render_pass.bind_pipeline(pipeline)
+            cursor = spy.ShaderCursor(root)
+
+            cursor.find_field("MVP").write(spy.float4x4(MVP))
+            cursor.find_field("vertices").write(gpu_mesh['vertices'])
+            cursor.find_field("vertex_colors").write(gpu_mesh['vertex_colors'])
+
+            render_pass.set_render_state(gpu_mesh['render_state'])
+            render_pass.draw_indexed(spy.DrawArguments({
+                "vertex_count": 3 * len(mesh.faces),
+                "instance_count": 1,
+                "start_index_location": 0,
+            }))
+
+        render_pass.end()
+
+    if args.output is None:
+        app = window.App(slang_device, color_image)
+        vars = {'time': 0.0}
+        def update(t, vars):
+            vars['time'] = t
+            return vars
+
+        def render(command_encoder, vars, img):
+            render_frame(command_encoder, vars['time'])
+
+        app.run(vars, render, update)
+    else:
+        t = args.time % scene.duration if hasattr(args, 'time') else 0.0
+        command_encoder = slang_device.create_command_encoder()
+        render_frame(command_encoder, t)
+        slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        image.save_png(args.output, color_image.to_numpy())
+
+def create_Kd_texture(slang_device, material, scene_dir):
+    if 'texture' in material:
+        filename = os.path.join(scene_dir, material['texture'])
+        rgba = np.asarray(
+            Image.open(filename).convert('RGBA'),
+            dtype=np.uint8)
+    else:
+        color = material['Kd']
+        rgba = np.array(
+            [[[*color, 1.0]]], dtype=np.float32)
+        rgba = np.uint8(np.round(np.clip(rgba, 0, 1) * 255))
+
+    height, width = rgba.shape[:2]
+
+    return slang_device.create_texture(
+        width=width,
+        height=height,
+        format=spy.Format.rgba8_unorm_srgb,
+        usage=spy.TextureUsage.shader_resource,
+        data=np.array(rgba, dtype=np.uint8, copy=True, order='C').ravel()
+    )
+
+def hw2_7(args):
+    slang_device = spy.create_device()
+    program = slang_device.load_program(
+        "hw2/hw2_7.slang",
+        ["vertex_main", "fragment_main"]
+    )
+
+    scene = hw2_scene.parse_scene(args.scene)
+    camera = scene.camera
+    width = camera.resolution[0]
+    height = camera.resolution[1]
+    a = width / height
+
+    # Upload meshes to GPU
+    gpu_meshes = []
+    for mesh in scene.meshes:
+        vertices = buffer.structured_typed_buffer_from_numpy(
+            slang_device, mesh.vertices, 'float3')
+        vertex_normals = buffer.structured_typed_buffer_from_numpy(
+            slang_device, mesh.vertex_normals, 'float3')
+        vertex_uvs = buffer.structured_typed_buffer_from_numpy(
+            slang_device, mesh.vertex_uvs, 'float2')
+        indices_host = np.ascontiguousarray(
+            mesh.faces.reshape(-1), dtype=np.uint32)
+        indices = slang_device.create_buffer(
+            size=indices_host.nbytes,
+            usage=spy.BufferUsage.index_buffer,
+            data=indices_host
+        )
+
+        render_state = spy.RenderState({
+            'viewports': [spy.Viewport.from_size(width, height)],
+            'scissor_rects': [spy.ScissorRect.from_size(width, height)],
+            'index_buffer': spy.BufferOffsetPair(indices),
+            'index_format': spy.IndexFormat.uint32,
+        })
+
+        gpu_meshes.append({
+            'vertices': vertices,
+            'indices': indices,
+            'vertex_normals': vertex_normals,
+            'vertex_uvs': vertex_uvs,
+            'render_state': render_state
+        })
+
+    color_image = slang_device.create_texture(
+        width=width,
+        height=height,
+        format=spy.Format.rgba32_float,
+        usage=(spy.TextureUsage.render_target |
+               spy.TextureUsage.shader_resource |
+               spy.TextureUsage.copy_source)
+    )
+
+    depth_image = slang_device.create_texture(
+        width=width,
+        height=height,
+        format=spy.Format.d32_float,
+        usage=spy.TextureUsage.depth_stencil
+    )
+    color_view = color_image.create_view()
+    depth_view = depth_image.create_view()
+
+    pipeline = slang_device.create_render_pipeline(
+        program=program,
+        input_layout=None,
+        primitive_topology=spy.PrimitiveTopology.triangle_list,
+        targets=[
+            spy.ColorTargetDesc({"format": color_image.format})
+        ],
+        depth_stencil=spy.DepthStencilDesc({
+            "format": spy.Format.d32_float,
+            "depth_test_enable": True,
+            "depth_write_enable": True,
+            "depth_func": spy.ComparisonFunc.less,
+        }),
+        rasterizer=spy.RasterizerDesc({
+            "cull_mode": spy.CullMode.none
+        }),
+    )
+
+    render_pass_desc = spy.RenderPassDesc({
+        'color_attachments': [
+            spy.RenderPassColorAttachment({
+                'view': color_view,
+                'load_op': spy.LoadOp.clear,
+                'store_op': spy.StoreOp.store,
+                'clear_value': spy.float4(\
+                    scene.background[0],
+                    scene.background[1], 
+                    scene.background[2], 1.0),
+            })
+        ],
+        'depth_stencil_attachment': spy.RenderPassDepthStencilAttachment({
+            'view': depth_view,
+            'depth_load_op': spy.LoadOp.clear,
+            'depth_store_op': spy.StoreOp.dont_care,
+            'depth_clear_value': 1.0,
+        }),
+    })
+
+    clip_projection = np.array([
+        [1 / (camera.s * a), 0, 0, 0],
+        [0, 1 / camera.s, 0, 0],
+        [0, 0, -1, -camera.z_near],
+        [0, 0, -1, 0],
+    ], dtype=np.float32)
+
+    Kd_textures = [
+        create_Kd_texture(slang_device,
+                          mesh.material,
+                          os.path.dirname(args.scene))
+        for mesh in scene.meshes
+    ]
+
+    Kd_sampler = slang_device.create_sampler()
+
+    def render_frame(command_encoder, t):
+        t = t % scene.duration
+        # HW 2.7 TODO: compute cam_to_world and view matrix
+        # remember to handle animation if keyframes exist
+        if camera.transform_keyframes:
+            cam_to_world = hw2_scene.compose_transformations(
+                interpolate_transformation(camera.transform_keyframes, t)
+            )
+        else:
+            cam_to_world = camera.cam_to_world
+
+        view_matrix = np.linalg.inv(cam_to_world)
+
+        render_pass = command_encoder.begin_render_pass(render_pass_desc)
+
+        for mesh, gpu_mesh, Kd_texture in zip(scene.meshes, gpu_meshes, Kd_textures):
+            # HW 2.7 TODO: compute the model matrix
+            # remember to handle animation if keyframes exist
+            if mesh.transform_keyframes:
+                model_matrix = hw2_scene.compose_transformations(
+                    interpolate_transformation(mesh.transform_keyframes, t)
+                )
+            else:
+                model_matrix = mesh.model_matrix
+
+            normal_matrix = np.linalg.inv(model_matrix[:3, :3]).T
+            normal_matrix = np.asarray(normal_matrix, dtype=np.float32)
+
+            MVP = clip_projection @ view_matrix @ model_matrix
+
+            root = render_pass.bind_pipeline(pipeline)
+            cursor = spy.ShaderCursor(root)
+
+            cursor.find_field("MVP").write(spy.float4x4(MVP))
+            cursor.find_field("model_matrix").write(spy.float4x4(model_matrix))
+            cursor.find_field("normal_matrix").write(spy.float3x3(normal_matrix))
+            cursor.find_field("vertices").write(gpu_mesh['vertices'])
+            cursor.find_field("vertex_normals").write(gpu_mesh['vertex_normals'])
+            cursor.find_field("vertex_uvs").write(gpu_mesh['vertex_uvs'])
+
+            cursor.find_field("light_dir").write(spy.float3(scene.light_dir))
+            cursor.find_field("light_color").write(spy.float3(scene.light_color))
+            cursor.find_field("camera_position").write(
+                spy.float3(cam_to_world[:3, 3]))
+
+            cursor.find_field("Kd_texture").write(Kd_texture)
+            cursor.find_field("Kd_sampler").write(Kd_sampler)
+            cursor.find_field("Ks").write(spy.float3(mesh.material['Ks']))
+            cursor.find_field("exponent").write(mesh.material['exponent'])
+
+            render_pass.set_render_state(gpu_mesh['render_state'])
+            render_pass.draw_indexed(spy.DrawArguments({
+                "vertex_count": 3 * len(mesh.faces),
+                "instance_count": 1,
+                "start_index_location": 0,
+            }))
+
+        render_pass.end()
+
+    if args.output == None:
+        app = window.App(slang_device, color_image)
+        vars = {'time': 0.0}
+        def update(t, vars):
+            vars['time'] = t
+            return vars
+
+        def render(command_encoder, vars, img):
+            render_frame(command_encoder, vars['time'])
+
+        app.run(vars, render, update)
+    else:
+        t = args.time % scene.duration if hasattr(args, 'time') else 0.0
+        command_encoder = slang_device.create_command_encoder()
+        render_frame(command_encoder, t)
+        slang_device.submit_command_buffer(
+            command_encoder.finish()
+        )
+        image.save_png(args.output, color_image.to_numpy())

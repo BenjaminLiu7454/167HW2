@@ -1,0 +1,282 @@
+{
+  "duration": 9.0,
+  "camera": {
+    "resolution": [
+      1280,
+      800
+    ],
+    "s": 0.45,
+    "z_near": 0.01
+  },
+  "background": [
+    0.2,
+    0.05,
+    0.05
+  ],
+  "objects": [
+    {
+      "filename": "dragon_colored.ply",
+      "material": {
+        "Kd": [0.5, 0.01, 0.01],
+        "Ks": [0.5, 0.1, 0.1],
+        "exponent": 64.0
+      },
+      "transform_keyframes": [
+        {
+          "time": 0.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                0.9
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                60
+              ]
+            }
+          ]
+        },
+        {
+          "time": 9.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                0.9
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                -300
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "filename": "dragon_colored.ply",
+      "material": {
+        "Kd": [0.1, 0.5, 0.01],
+        "Ks": [0, 0.4, 0.3],
+        "exponent": 64.0
+      },
+      "transform_keyframes": [
+        {
+          "time": 0.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                2.0
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                180
+              ]
+            }
+          ]
+        },
+        {
+          "time": 9.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                0.9
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                -180
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "filename": "stanford_bunny_baked.ply",
+      "material": {
+        "Kd": [0.5, 0.01, 0.01],
+        "Ks": [0.5, 0.1, 0.1],
+        "exponent": 64.0
+      },
+      "transform_keyframes": [
+        {
+          "time": 0.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                3.9
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                300
+              ]
+            }
+          ]
+        },
+        {
+          "time": 9.0,
+          "transform": [
+            {
+              "scale": [
+                0.9,
+                0.9,
+                0.9
+              ]
+            },
+            {
+              "rotate_y": [
+                90
+              ]
+            },
+            {
+              "translate": [
+                0,
+                0,
+                -2.5
+              ]
+            },
+            {
+              "rotate_y": [
+                -60
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "filename": "valorant_weapon_sheriff_pistol.ply",
+      "material": {
+        "Kd": [0.1, 0.1, 0.1],
+        "Ks": [0.0, 0.0, 0.0],
+        "exponent": 64.0
+      },
+      "transform_keyframes": [
+        {
+          "time": 0.0,
+          "transform": [
+            {"scale": [0.005, 0.005, 0.005]},
+            {"rotate_y": [90]},
+            {"rotate_z": [90]},
+            {"translate": [1, -1, -2]},
+            {"rotate_y": [300]}
+            ]
+        },
+        {
+        "time": 9.0,
+        "transform": [
+            {"scale": [0.005, 0.005, 0.005]},
+            {"rotate_y": [90]},
+            {"rotate_z": [90]},
+            {"translate": [1, -1, -2]},
+            {"rotate_y": [-60]}
+            ]
+        }
+      ]
+    },
+    {
+      "filename": "valorant_weapon_sheriff_pistol.ply",
+      "material": {
+        "Kd": [0.1, 0.1, 0.1],
+        "Ks": [0.0, 0.0, 0.0],
+        "exponent": 64.0
+      },
+      "transform_keyframes": [
+        {
+          "time": 0.0,
+          "transform": [
+            {"scale": [0.005, 0.005, 0.005]},
+            {"rotate_y": [90]},
+            {"rotate_z": [90]},
+            {"translate": [-1, -1, -2.5]},
+            {"rotate_y": [300]}
+            ]
+        },
+        {
+        "time": 9.0,
+        "transform": [
+            {"scale": [0.005, 0.005, 0.005]},
+            {"rotate_y": [90]},
+            {"rotate_z": [90]},
+            {"translate": [-1, -1, -2.5]},
+            {"rotate_y": [-60]}
+            ]
+        }
+      ]
+    }
+  ]
+}

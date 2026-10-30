@@ -1,8 +1,8 @@
 //helper to compute one edge
 float edge_value(float2 vi, float2 vj, float2 p) {      //E_(ij)(p) = (p - v_(i)) * n_(ij)
-    float2 e = vj - vi;
-    float2 n = float2(e.y, -e.x);
-    return dot(p - vi, n);
+    float2 e = vj - vi;                                 //direction of edge
+    float2 n = float2(e.y, -e.x);                       
+    return dot(p - vi, n);                  
 }
 
 [shader("compute")]
@@ -18,7 +18,7 @@ void compute_main(uint2 tid : SV_DispatchThreadID,
     int2 ipixel = int2(tid) + int2(aabb_min);
     uint width, height;
     image.GetDimensions(width, height);
-    if (ipixel.x < 0 || ipixel.y < 0 || ipixel.x >= width || ipixel.y >= height) {
+    if (ipixel.x < 0 || ipixel.y < 0 || ipixel.x >= width || ipixel.y >= height) {  
         return;
     }
 
